@@ -79,6 +79,46 @@ Panel {
 
   readonly property var current: configFor(editingKey)
 
+  // Home, expanded the same way the service expands it. The widget used to
+  // hand a literal "~/..." to find(1) inside a quoted argument, where the
+  // shell never expands it, so a typed ~/Pictures folder shuffled fine (the
+  // service expands it) while the thumbnail picker came up empty.
+  readonly property string homeDir: Quickshell.env("HOME")
+
+  function expandHome(path, home) {
+    var base = home || homeDir
+    path = String(path || "").trim()
+    if (path === "~") return base
+    if (path.indexOf("~/") === 0) return base + path.substring(1)
+    if (path !== "" && path.indexOf("/") !== 0) return base + "/" + path
+    return path
+  }
+
+  // What this display is actually showing right now, from the service's
+  // status reply. Used to pin the current image when switching to Single,
+  // instead of leaving pinned empty (which is why a shuffle-then-single
+  // image vanished on the next shell restart: nothing had been saved).
+  function currentShown() {
+    var key = editingKey
+    if (screenPicks && screenPicks[key]) return String(screenPicks[key])
+    if (screenPicks) {
+      for (var n in screenPicks) {
+        var p = String(screenPicks[n] || "")
+        if (p !== "") return p
+      }
+    }
+    return ""
+  }
+
+  function pinCurrent() {
+    // Only when a folder is actually set: pinning a theme background by
+    // accident would make Single stick to an image outside the folder.
+    if (String(current.folder || "").trim() === "") return ""
+    var shown = currentShown()
+    if (shown !== "") root.persistDisplay("pinned", shown)
+    return shown
+  }
+
   // Writes the whole displayConfig back, because setBarWidget replaces a key
   // rather than merging into it. Seeding from the resolved config also folds
   // any legacy top-level settings into the new shape on the first edit, which
@@ -170,7 +210,7 @@ Panel {
   // holds only what the *service* is configured to use, and the picker has to
   // show the folder being edited, which may be a different display's.
   function loadPicker() {
-    var folder = String(current.folder || "").trim()
+    var folder = expandHome(String(current.folder || ""))
     if (folder === "" || pickerProc.running) { pickerImages = []; return }
     pickerProc.command = ["bash", "-c",
       "find -L " + Util.shellQuote(folder) + (current.recursive ? "" : " -maxdepth 1") +
@@ -391,10 +431,87 @@ Panel {
 
   // ----------------------------------------------------------------- actions
 
+  // Browse, without a hard dependency on any one file manager or dialog.
+  //
+  // Upstream Browse… was zenity-only. zenity is a GTK dialog: it bypasses
+  // the xdg-desktop-portal FileChooser, so it never opens Strata even when
+  // Strata is configured as the system chooser, and on a system without
+  // zenity (or without the GNOME stack it came with) it fails to start and
+  // the button just looks dead — the failure only went to the shell log.
+  // So: try zenity when it is present, and otherwise — or when it fails to
+  // start — fall back to a built-in directory browser in this panel. That
+  // browser needs nothing but find(1), so it works with Nautilus, with
+  // Strata, and with neither installed. A picker failure is now shown in
+  // the panel instead of only logged.
+  property string pickerError: ""
+  property bool browseOpen: false
+  property string browseDir: ""
+  property var browseDirs: []
+  property int zenityPresent: -1
+  property bool browsePicked: false
+  property string browseStderr: ""
+
+  function openBuiltinBrowse() {
+    // Do not clear pickerError here: the zenity-failure path sets it just
+    // before calling this, and clearing it would hide the explanation.
+    root.browseOpen = true
+    var start = expandHome(root.current.folder)
+    root.browseDir = start !== "" ? start : homeDir
+    loadBrowseDirs()
+  }
+
+  function loadBrowseDirs() {
+    if (browseDirProc.running || root.browseDir === "") { root.browseDirs = []; return }
+    browseDirProc.command = ["bash", "-c",
+      "find -L " + Util.shellQuote(root.browseDir) +
+      " -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort | head -100"]
+    browseDirProc.running = true
+  }
+
+  function browseParent() {
+    var dir = String(root.browseDir)
+    if (dir === "/" || dir === "") return
+    var cut = dir.lastIndexOf("/")
+    root.browseDir = cut <= 0 ? "/" : dir.substring(0, cut)
+    loadBrowseDirs()
+  }
+
+  function browseUse() {
+    if (root.browseDir === "") return
+    root.folderEdited = false
+    root.browseOpen = false
+    root.pickerError = ""
+    root.persistDisplay("folder", root.browseDir)
+  }
+
+  Process {
+    id: zenityProbe
+    command: ["bash", "-c", "command -v zenity >/dev/null && echo yes || echo no"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.zenityPresent = String(text || "").trim() === "yes" ? 1 : 0
+    }
+  }
+
+  Process {
+    id: browseDirProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.browseDirs = String(text || "").split("\n").filter(function(p) { return p !== "" })
+      }
+    }
+  }
+
   function browse() {
     if (browseProc.running) return
     // Choosing the dialog supersedes anything half-typed in the field.
     root.folderEdited = false
+    root.browsePicked = false
+    root.browseStderr = ""
+    // Known-missing zenity: skip straight to the built-in browser instead
+    // of launching something that cannot start.
+    if (root.zenityPresent === 0) { openBuiltinBrowse(); return }
 
     // Close before launching, not because the dialog needs it but because the
     // panel holds exclusive keyboard focus while it is open. zenity maps behind
@@ -406,13 +523,14 @@ Panel {
 
     var cmd = ["zenity", "--file-selection", "--directory",
       "--title=Choose a wallpaper folder"]
-    if (root.current.folder !== "") cmd.push("--filename=" + root.current.folder + "/")
+    if (root.current.folder !== "") cmd.push("--filename=" + root.expandHome(root.current.folder) + "/")
     browseProc.command = cmd
     browseProc.running = true
   }
 
   // Cancelling zenity exits nonzero with no stdout, which lands here as an
-  // empty string — treated the same as "no change".
+  // empty string — treated the same as "no change". A zenity that fails to
+  // start is different: fall back to the built-in browser in the panel.
   Process {
     id: browseProc
     // Come back whether a folder was chosen or the dialog was cancelled: the
@@ -420,14 +538,26 @@ Panel {
     // gesture implies either way. stdout is delivered before exit, so by now
     // any chosen path has already been persisted and the panel reopens showing
     // it rather than the path it replaced.
-    onExited: if (!root.opened) root.open()
+    onExited: function(code, status) {
+      var failedToStart = !root.browsePicked &&
+        (root.browseStderr.indexOf("not found") !== -1 ||
+         root.browseStderr.indexOf("No such file") !== -1 ||
+         root.zenityPresent === 0)
+      if (!root.opened) root.open()
+      if (failedToStart) {
+        root.pickerError = "No external folder picker found — using the built-in browser below."
+        console.warn("omawall: zenity failed to start: " + root.browseStderr)
+        Qt.callLater(function() { root.openBuiltinBrowse() })
+      } else if (root.browsePicked) {
+        root.pickerError = ""
+      }
+    }
 
-    // Without this, a zenity that fails to start says so into a void and the
-    // button just looks inert.
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var err = String(text || "").trim()
+        root.browseStderr = err
         if (err !== "") console.warn("omawall: zenity: " + err)
       }
     }
@@ -436,6 +566,7 @@ Panel {
       onStreamFinished: {
         var picked = String(text || "").trim()
         if (picked === "") return
+        root.browsePicked = true
         root.folderEdited = false
         root.persistDisplay("folder", picked)
       }
@@ -485,13 +616,20 @@ Panel {
   // is part-way through typing something else.
   // The folder can change from the file dialog, the CLI, or by switching to
   // another display's tab. Mirror it back unless the user is mid-edit.
-  onCurrentChanged: if (!folderEdited && folderField) folderField.text = current.folder
+  onCurrentChanged: {
+    if (!folderEdited && folderField) folderField.text = current.folder
+    // Opening the panel in Single mode used to show an empty grid until
+    // something else changed: nothing called loadPicker() on open.
+    if (current && current.mode === "single" && current.folder !== "") loadPicker()
+  }
 
   onOpenedChanged: if (opened) {
     folderEdited = false
     folderField.text = root.current.folder
     refreshStatus()
     if (!matugenProbe.running) matugenProbe.running = true
+    if (!zenityProbe.running && root.zenityPresent === -1) zenityProbe.running = true
+    if (current && current.mode === "single") loadPicker()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -838,7 +976,7 @@ Panel {
               onTextChanged: if (activeFocus) root.folderEdited = true
               onAccepted: {
                 root.folderEdited = false
-                root.persistDisplay("folder", text.trim())
+                root.persistDisplay("folder", root.expandHome(text.trim()))
               }
               // editingFinished fires on any focus loss, including the panel
               // being dismissed because the file dialog took focus. Writing
@@ -848,7 +986,7 @@ Panel {
               onEditingFinished: {
                 if (!root.folderEdited) return
                 root.folderEdited = false
-                if (text.trim() !== root.current.folder) root.persistDisplay("folder", text.trim())
+                if (root.expandHome(text.trim()) !== root.current.folder) root.persistDisplay("folder", root.expandHome(text.trim()))
               }
             }
 
@@ -860,6 +998,119 @@ Panel {
               fontFamily: root.fontFamily
               anchors.verticalCenter: parent.verticalCenter
               onClicked: root.browse()
+            }
+          }
+
+          Text {
+            visible: root.pickerError !== ""
+            width: parent.width
+            text: root.pickerError
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          // Built-in folder browser: no zenity, no file manager, no portal
+          // config required. Click a subfolder to go into it, Up/Home to
+          // move, then "Use this folder" to save it.
+          Column {
+            visible: root.browseOpen
+            width: parent.width
+            spacing: Style.space(8)
+
+            Text {
+              width: parent.width
+              text: root.browseDir
+              color: root.fg
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
+            }
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+
+              Button {
+                text: "Up"
+                bordered: true
+                foreground: root.fg
+                fontFamily: root.fontFamily
+                onClicked: root.browseParent()
+              }
+
+              Button {
+                text: "Home"
+                bordered: true
+                foreground: root.fg
+                fontFamily: root.fontFamily
+                onClicked: { root.browseDir = root.homeDir; root.loadBrowseDirs() }
+              }
+
+              Button {
+                text: "Use this folder"
+                bordered: true
+                foreground: root.fg
+                fontFamily: root.fontFamily
+                onClicked: root.browseUse()
+              }
+
+              Button {
+                text: "Close"
+                bordered: true
+                foreground: root.fg
+                fontFamily: root.fontFamily
+                onClicked: root.browseOpen = false
+              }
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(180)
+              color: "transparent"
+              border.width: Style.normalBorderWidth
+              border.color: Qt.darker(root.fg, 2.0)
+
+              ListView {
+                anchors.fill: parent
+                anchors.margins: Style.space(4)
+                clip: true
+                model: root.browseDirs
+
+                delegate: Item {
+                  required property var modelData
+                  width: parent.width
+                  height: 28
+
+                  Text {
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(4)
+                    verticalAlignment: Text.AlignVCenter
+                    text: String(modelData).substring(String(modelData).lastIndexOf("/") + 1)
+                    color: root.fg
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideMiddle
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { root.browseDir = String(modelData); root.loadBrowseDirs() }
+                  }
+                }
+              }
+            }
+
+            Text {
+              visible: root.browseDirs.length === 0
+              width: parent.width
+              text: "No subfolders here. Use this folder, or go Up."
+              color: Qt.darker(root.fg, 1.5)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
           }
 
@@ -908,8 +1159,27 @@ Panel {
             onChanged: function(v) {
               var mode = String(v).toLowerCase()
               root.persistDisplay("mode", mode)
-              if (mode === "single") root.loadPicker()
+              if (mode === "single") {
+                // The shuffle-then-single workflow, made real: save the
+                // image on screen as the pin, so a shell restart restores
+                // it instead of dropping back to a fresh shuffle.
+                root.pinCurrent()
+                root.loadPicker()
+              }
             }
+          }
+
+          // Explicit version of the same thing, for when Single was already
+          // on and the pin was never saved (the pre-fix behaviour).
+          Button {
+            visible: root.current.mode === "single" && root.current.pinned === "" && root.currentShown() !== ""
+            text: "Pin current wallpaper"
+            bordered: true
+            leftAlign: true
+            width: parent.width
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            onClicked: root.pinCurrent()
           }
 
           // The picker. Thumbnails come straight off disk, and GridView only
@@ -940,7 +1210,12 @@ Panel {
                 Image {
                   anchors.fill: parent
                   anchors.margins: Style.space(3)
-                  source: "file://" + modelData
+                  // Util.fileUrl, not "file://" + path: a raw concatenation
+                  // breaks on spaces, #, % and other characters that are
+                  // legal in filenames, which is why thumbnails went blank
+                  // for folders whose names contained them. The hover
+                  // preview already used fileUrl; the picker did not.
+                  source: Util.fileUrl(modelData)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
                   cache: true
@@ -966,6 +1241,16 @@ Panel {
                 }
               }
             }
+          }
+
+          Text {
+            visible: root.current.mode === "single" && root.pickerImages.length === 0 && root.current.folder !== ""
+            width: parent.width
+            text: "No thumbnails loaded — check the folder path, then press Rescan. A blank grid used to be the only sign anything was wrong."
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
           }
 
           Text {

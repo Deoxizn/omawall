@@ -4,6 +4,29 @@ Folder-backed wallpapers for [Omarchy](https://omarchy.org) Quattro. Every
 display gets its own image, its own settings if you want them, and your whole
 desktop theme can follow along.
 
+> **Fork note (Deoxizn/omawall, v1.4.2).** Fork of
+> [matjam/omawall](https://github.com/matjam/omawall), changed so Browse and
+> the Single-image picker work without zenity, Nautilus, or any particular
+> file manager — including on an Omarchy setup whose file manager is Strata.
+> The plugin id is deliberately still `matjam.omawall`, so settings saved by
+> the upstream plugin carry over instead of resetting.
+>
+> Fixes in this fork:
+> - **Browse…** tries zenity when present, and falls back to a built-in
+>   folder browser in the panel when zenity is missing or fails to start.
+>   A failure is now shown in the panel, not only in the shell log.
+> - **Thumbnails** in Single mode now load for `~/…` folders (the widget
+>   used to pass a literal `~` to `find`) and for filenames with spaces,
+>   `#`, `%` and friends (thumbnails now use a proper file URL, as the
+>   hover preview already did). The grid also loads when the panel opens
+>   in Single mode, and says so when it finds nothing, instead of staying
+>   blank.
+> - **Single actually pins.** Switching Shuffle → Single now saves the
+>   image currently on screen as the pin, and there is a "Pin current
+>   wallpaper" button when Single is on with no pin saved. Before, that
+>   shuffle-then-single workflow saved nothing, so the next shell restart
+>   dropped the image — that was the "resets every shell reset" bug.
+
 > **Written by Claude**, Anthropic's coding agent. Tested on real hardware, but
 > tested isn't proven — and Omarchy plugins run unsandboxed inside your shell
 > process, with your permissions. Read the source first. No promises about
@@ -33,7 +56,7 @@ install it and decide later.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/matjam/omawall.git --enable
+omarchy plugin add https://github.com/Deoxizn/omawall.git --enable
 ```
 
 Put the widget on the `right` when prompted. This disables the built-in
@@ -51,7 +74,7 @@ Everything else works without it, and the panel tells you when it's missing.
 Add it whenever; nothing needs reinstalling.
 
 ```bash
-omarchy plugin update matjam.omawall    # update
+omarchy plugin update matjam.omawall    # update (id is unchanged in this fork)
 omarchy plugin remove matjam.omawall    # remove, leaves nothing behind
 ```
 
@@ -162,7 +185,8 @@ bin/omawall-generate-theme --image ~/Pictures/wall.jpg --mode dark [--no-apply]
 
 ## Requirements
 
-Omarchy Quattro · `zenity` for the Browse button (ships with Omarchy) ·
+Omarchy Quattro · no file-manager or dialog dependency for Browse in this
+fork (zenity is used when present, otherwise the built-in panel browser) ·
 `matugen` for theme generation only.
 
 matugen is GPL-2.0 and omawall is MIT; omawall only executes it as a separate

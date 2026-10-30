@@ -529,6 +529,10 @@ Item {
       var cfg = configFor(name)
       if (cfg.mode === "single") {
         if (cfg.pinned !== "") picks[name] = cfg.pinned
+        // No pin saved yet (the pre-fix shuffle-then-single workflow never
+        // wrote one): keep what is already on screen instead of dropping
+        // the display to nothing on the next rescan or shell restart cycle.
+        else if (displayedMap[name]) picks[name] = displayedMap[name]
         continue
       }
       var key = poolKeyFor(name)

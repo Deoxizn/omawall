@@ -13,6 +13,7 @@ function qmlFunction(file, name) {
 const lookupSettings = qmlFunction('ShellSettings.qml', 'lookupSettings');
 const fromUrl = qmlFunction('LocalPath.qml', 'fromUrl');
 const versionFor = qmlFunction('ServiceVersion.qml', 'versionFor');
+const expandHome = qmlFunction('BarWidget.qml', 'expandHome');
 const id = 'matjam.omawall';
 const entry = { id, folder: '/wallpapers', autoTheme: true };
 
@@ -46,6 +47,17 @@ test('handles missing configuration and ignores other plugins', () => {
 test('decodes bundled local paths without private manifest fields', () => {
   assert.equal(fromUrl('file:///plugins/my%20wallpapers/bin/tool%25%23'), '/plugins/my wallpapers/bin/tool%#');
   assert.equal(fromUrl('https://example.test/a%20b'), 'https://example.test/a%20b');
+});
+
+test('expands home in widget folder paths before scanning', () => {
+  // Regression: the widget passed a literal "~" to find(1), so a typed
+  // ~/Pictures folder shuffled (the service expands it) but showed no
+  // thumbnails in Single mode.
+  assert.equal(expandHome('~/Pictures/wallpapers', '/home/devi'), '/home/devi/Pictures/wallpapers');
+  assert.equal(expandHome('~', '/home/devi'), '/home/devi');
+  assert.equal(expandHome('Pictures/wallpapers', '/home/devi'), '/home/devi/Pictures/wallpapers');
+  assert.equal(expandHome('/wallpapers', '/home/devi'), '/wallpapers');
+  assert.equal(expandHome('', '/home/devi'), '');
 });
 
 test('reads the version through the public service API', () => {

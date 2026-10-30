@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.2](https://github.com/Deoxizn/omawall) (2026-10-29, fork)
+
+### Bug Fixes
+
+* Browse no longer depends on zenity/Nautilus: falls back to a built-in
+  panel folder browser, and picker failures are shown in the panel.
+* Single-mode thumbnails load for `~/…` folders and filenames with spaces
+  or special characters; the grid loads on panel open and reports empty.
+* Switching to Single now pins the image on screen, and a "Pin current
+  wallpaper" button covers the old unpinned case, so the image survives
+  a shell restart instead of resetting.
+* A display in Single mode with no pin saved keeps its current image on
+  rescan instead of dropping it.
+
 ## [1.4.1](https://github.com/matjam/omawall/compare/v1.4.0...v1.4.1) (2026-09-15)
 
 
