@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.3](https://github.com/Deoxizn/omawall) (2026-10-29, fork)
+
+### Bug Fixes
+
+* The background service now finds the plugin's settings in any bar
+  section (tray, centerEnd, centerBegin, …), not just left/center/right.
+  A widget in tray previously looked fine in the panel while the service
+  saw no folder at all and reported "No images found in that folder".
+* Browse no longer tries zenity at all: it opens the built-in panel
+  folder browser directly, so a Strata portal routing zenity's dialog
+  can no longer turn Browse into just opening Strata.
+
 ## [1.4.2](https://github.com/Deoxizn/omawall) (2026-10-29, fork)
 
 ### Bug Fixes

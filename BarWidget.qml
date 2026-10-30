@@ -433,27 +433,18 @@ Panel {
 
   // Browse, without a hard dependency on any one file manager or dialog.
   //
-  // Upstream Browse… was zenity-only. zenity is a GTK dialog: it bypasses
-  // the xdg-desktop-portal FileChooser, so it never opens Strata even when
-  // Strata is configured as the system chooser, and on a system without
-  // zenity (or without the GNOME stack it came with) it fails to start and
-  // the button just looks dead — the failure only went to the shell log.
-  // So: try zenity when it is present, and otherwise — or when it fails to
-  // start — fall back to a built-in directory browser in this panel. That
-  // browser needs nothing but find(1), so it works with Nautilus, with
-  // Strata, and with neither installed. A picker failure is now shown in
-  // the panel instead of only logged.
+  // Upstream Browse… was zenity-only. On a system where zenity's dialog
+  // is routed through the xdg-desktop-portal FileChooser (Strata's portal
+  // is installed here), clicking Browse just opens Strata itself, with no
+  // way to actually select a folder. So Browse now opens the built-in
+  // directory browser in this panel directly, every time: no zenity, no
+  // portal, no file manager. It needs nothing but find(1).
   property string pickerError: ""
   property bool browseOpen: false
   property string browseDir: ""
   property var browseDirs: []
-  property int zenityPresent: -1
-  property bool browsePicked: false
-  property string browseStderr: ""
 
   function openBuiltinBrowse() {
-    // Do not clear pickerError here: the zenity-failure path sets it just
-    // before calling this, and clearing it would hide the explanation.
     root.browseOpen = true
     var start = expandHome(root.current.folder)
     root.browseDir = start !== "" ? start : homeDir
@@ -485,15 +476,6 @@ Panel {
   }
 
   Process {
-    id: zenityProbe
-    command: ["bash", "-c", "command -v zenity >/dev/null && echo yes || echo no"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.zenityPresent = String(text || "").trim() === "yes" ? 1 : 0
-    }
-  }
-
-  Process {
     id: browseDirProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -504,73 +486,10 @@ Panel {
   }
 
   function browse() {
-    if (browseProc.running) return
-    // Choosing the dialog supersedes anything half-typed in the field.
+    // Choosing a folder supersedes anything half-typed in the field.
     root.folderEdited = false
-    root.browsePicked = false
-    root.browseStderr = ""
-    // Known-missing zenity: skip straight to the built-in browser instead
-    // of launching something that cannot start.
-    if (root.zenityPresent === 0) { openBuiltinBrowse(); return }
-
-    // Close before launching, not because the dialog needs it but because the
-    // panel holds exclusive keyboard focus while it is open. zenity maps behind
-    // that and comes up unfocused; the click needed to focus it then lands
-    // outside the panel's card and dismisses it anyway. Standing aside first
-    // lets the dialog take focus normally and turns a panel that gets knocked
-    // over into one that hands off deliberately. It comes back in onExited.
-    root.close()
-
-    var cmd = ["zenity", "--file-selection", "--directory",
-      "--title=Choose a wallpaper folder"]
-    if (root.current.folder !== "") cmd.push("--filename=" + root.expandHome(root.current.folder) + "/")
-    browseProc.command = cmd
-    browseProc.running = true
-  }
-
-  // Cancelling zenity exits nonzero with no stdout, which lands here as an
-  // empty string — treated the same as "no change". A zenity that fails to
-  // start is different: fall back to the built-in browser in the panel.
-  Process {
-    id: browseProc
-    // Come back whether a folder was chosen or the dialog was cancelled: the
-    // dialog is an excursion from the panel, so returning to it is what the
-    // gesture implies either way. stdout is delivered before exit, so by now
-    // any chosen path has already been persisted and the panel reopens showing
-    // it rather than the path it replaced.
-    onExited: function(code, status) {
-      var failedToStart = !root.browsePicked &&
-        (root.browseStderr.indexOf("not found") !== -1 ||
-         root.browseStderr.indexOf("No such file") !== -1 ||
-         root.zenityPresent === 0)
-      if (!root.opened) root.open()
-      if (failedToStart) {
-        root.pickerError = "No external folder picker found — using the built-in browser below."
-        console.warn("omawall: zenity failed to start: " + root.browseStderr)
-        Qt.callLater(function() { root.openBuiltinBrowse() })
-      } else if (root.browsePicked) {
-        root.pickerError = ""
-      }
-    }
-
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var err = String(text || "").trim()
-        root.browseStderr = err
-        if (err !== "") console.warn("omawall: zenity: " + err)
-      }
-    }
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var picked = String(text || "").trim()
-        if (picked === "") return
-        root.browsePicked = true
-        root.folderEdited = false
-        root.persistDisplay("folder", picked)
-      }
-    }
+    root.pickerError = ""
+    openBuiltinBrowse()
   }
 
   // Quickshell.execDetached with an argv array, NOT Util.execDetached: that
@@ -628,7 +547,6 @@ Panel {
     folderField.text = root.current.folder
     refreshStatus()
     if (!matugenProbe.running) matugenProbe.running = true
-    if (!zenityProbe.running && root.zenityPresent === -1) zenityProbe.running = true
     if (current && current.mode === "single") loadPicker()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }

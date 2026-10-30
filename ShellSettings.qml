@@ -23,24 +23,35 @@ FileView {
   printErrors: false
   preload: true
 
+  // The service reads shell.json directly, while the panel gets its entry
+  // from the shell, so the two must agree on where that entry can live.
+  // Upstream only checked bar.layout left/center/right and plugins[].
+  // A widget in tray, centerBegin or centerEnd (the tray is where this
+  // plugin actually sits on a real desktop) was invisible to the service:
+  // the panel showed the folder, the service saw no settings at all, and
+  // the status read "No images found in that folder" for a folder full of
+  // images. Search the whole config, in document order, so any section
+  // works and bar entries still win over plugins[] entries.
   function lookupSettings(config, id) {
     if (!config || !id) return null
-    var sections = ["left", "center", "right"]
-    if (config.bar && config.bar.layout) {
-      for (var s = 0; s < sections.length; s++) {
-        var list = config.bar.layout[sections[s]]
-        if (!Array.isArray(list)) continue
-        for (var i = 0; i < list.length; i++) {
-          if (list[i] && String(list[i].id) === id) return list[i]
+    function search(node) {
+      if (typeof node === "string") return node === id ? { id: id } : null
+      if (!node || typeof node !== "object") return null
+      if (String(node.id) === id) return node
+      if (Array.isArray(node)) {
+        for (var i = 0; i < node.length; i++) {
+          var found = search(node[i])
+          if (found) return found
         }
+        return null
       }
-    }
-    if (Array.isArray(config.plugins)) {
-      for (var j = 0; j < config.plugins.length; j++) {
-        if (config.plugins[j] && String(config.plugins[j].id) === id) return config.plugins[j]
+      for (var k in node) {
+        var hit = search(node[k])
+        if (hit) return hit
       }
+      return null
     }
-    return null
+    return search(config)
   }
 
   function reloadSettings() {

@@ -4,7 +4,7 @@ Folder-backed wallpapers for [Omarchy](https://omarchy.org) Quattro. Every
 display gets its own image, its own settings if you want them, and your whole
 desktop theme can follow along.
 
-> **Fork note (Deoxizn/omawall, v1.4.2).** Fork of
+> **Fork note (Deoxizn/omawall, v1.4.3).** Fork of
 > [matjam/omawall](https://github.com/matjam/omawall), changed so Browse and
 > the Single-image picker work without zenity, Nautilus, or any particular
 > file manager — including on an Omarchy setup whose file manager is Strata.
@@ -12,9 +12,14 @@ desktop theme can follow along.
 > the upstream plugin carry over instead of resetting.
 >
 > Fixes in this fork:
-> - **Browse…** tries zenity when present, and falls back to a built-in
->   folder browser in the panel when zenity is missing or fails to start.
->   A failure is now shown in the panel, not only in the shell log.
+> - **Browse…** opens a built-in folder browser in the panel, every time.
+>   No zenity, no portal, no file manager: on a system where zenity's
+>   dialog is routed through Strata's portal, the old zenity-first attempt
+>   just opened Strata itself with no way to select a folder.
+> - **The service now sees settings wherever the widget sits.** Upstream
+>   only looked in bar.layout left/center/right, so a widget in tray (or
+>   centerEnd/centerBegin) was invisible to the service: the panel showed
+>   the folder, the service reported "No images found in that folder".
 > - **Thumbnails** in Single mode now load for `~/…` folders (the widget
 >   used to pass a literal `~` to `find`) and for filenames with spaces,
 >   `#`, `%` and friends (thumbnails now use a proper file URL, as the

@@ -17,13 +17,33 @@ const expandHome = qmlFunction('BarWidget.qml', 'expandHome');
 const id = 'matjam.omawall';
 const entry = { id, folder: '/wallpapers', autoTheme: true };
 
-for (const section of ['left', 'center', 'right']) {
+for (const section of ['left', 'center', 'centerBegin', 'centerEnd', 'right', 'tray']) {
   test('reads wallpaper settings from the ' + section + ' bar section', () => {
     const settings = lookupSettings({ bar: { layout: { [section]: [entry] } } }, id);
     assert.equal(settings.folder, '/wallpapers');
     assert.equal(settings.autoTheme, true);
   });
 }
+
+test('reads settings when the widget sits in the tray (real shell.json shape)', () => {
+  // Regression: the service only checked left/center/right, so a widget in
+  // tray saw no settings at all and reported "No images found" for a folder
+  // full of images, while the panel showed the folder fine.
+  const config = {
+    bar: {
+      layout: {
+        center: [],
+        centerBegin: [{ id: 'omarchy.indicators' }],
+        centerEnd: [{ id: 'omarchy.clock' }],
+        left: [{ id: 'omarchy.menu' }],
+        right: [{ id: 'omarchy.audio' }],
+        tray: [entry],
+      },
+    },
+    plugins: [],
+  };
+  assert.equal(lookupSettings(config, id).folder, '/wallpapers');
+});
 
 test('reads service-only settings and preserves bar precedence', () => {
   const service = { id, folder: '/service-only' };
